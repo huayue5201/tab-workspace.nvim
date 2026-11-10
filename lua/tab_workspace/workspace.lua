@@ -102,7 +102,7 @@ end
 function M.picker(opts)
 	opts = opts or {}
 	local root = require("tab_workspace.root")
-	local ok_state, state = pcall(require, "tab_workspace.state")
+	local ok_state, tab_state = pcall(require, "tab_workspace.state")
 	local ok_guard, guard = pcall(require, "tab_workspace.session_guard")
 	local current_tab = vim.api.nvim_get_current_tabpage()
 
@@ -119,7 +119,7 @@ function M.picker(opts)
 			number = vim.api.nvim_tabpage_get_number(tab),
 			label = root.name(tab),
 			dir = vim.fn.fnamemodify(dir, ":~"),
-			buffers = ok_state and #state.tab_buffers(tab) or 0,
+			buffers = ok_state and #tab_state.tab_buffers(tab) or 0,
 			current = tab == current_tab,
 		}
 	end

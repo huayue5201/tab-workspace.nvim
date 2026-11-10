@@ -1,142 +1,162 @@
-# `.nvim.lua` 参考
+# `.nvim.lua` reference
 
-工作区本地配置文件的完整说明。想先了解"工作区"是什么，看同目录的 `README.md`。
+Full documentation of the workspace-local configuration file. To learn what a
+"workspace" is first, see `README.md` in the same directory.
 
-## 是什么
+## What it is
 
-在工作区根目录放一个 `.nvim.lua`，它只在这个工作区里生效。切走（切 tab、切根目录、关 tab）时，
-通过 `w.*` 登记的每一项改动都会被还原；切回来时重新加载。
+Place a `.nvim.lua` in the workspace root and it only applies inside that
+workspace. When you switch away (switch tab, change root directory, close tab)
+every change registered through `w.*` is rolled back; when you come back it is
+loaded again.
 
-对标物：Emacs 的 `.dir-locals.el`、VS Code 的 `.vscode/settings.json`、JetBrains 的 `.idea/`。
-区别是这里**不需要新建格式**：`w.*` 只是 Lua 里几个登记函数。
+Comparisons: Emacs `.dir-locals.el`, VS Code `.vscode/settings.json`, JetBrains
+`.idea/`. The difference is that **no new format is needed** here: `w.*` are
+just a few registration functions in Lua.
 
-## 位置与发现规则
+## Location and discovery rules
 
-- 位置：`<工作区根>/.nvim.lua`，工作区根 = 当前 tab 的 `:tcd` 值（statusline 左侧显示的那个名字）。
-- 只认**当前 tab 的根**，不向父目录递归查找。monorepo 里想给子项目单独配置，就在子项目目录建。
-- 没有这个文件：什么都不做（零开销，不报错）。
-- 修改后重载：`:lua require("tab_workspace").reload_local_settings()`，
-  或切到别的根再切回来。编辑入口 `<leader>lwe`（文件不存在时按模板创建）。
+- Location: `<workspace root>/.nvim.lua`, where the workspace root is the `:tcd` value of the current tab (the name shown on the left of the statusline).
+- Only the **root of the current tab** is considered; no recursive search up the parent directories. To configure a subproject in a monorepo, create the file in that subproject directory.
+- No file: nothing happens (zero cost, no errors).
+- Reload after editing: `:lua require("tab_workspace").reload_local_settings()`, or switch to another root and back. Edit entry point: `<leader>lwe` (creates the file from a template when missing).
 
-## 信任
+## Trust
 
-首次加载会走 Neovim 的 `vim.secure.read`，也就是 `:trust` 那套：
+The first load goes through Neovim's `vim.secure.read`, i.e. the `:trust`
+mechanism:
 
-- 未信任 → 静默跳过，配置不生效；
-- 选择信任后会写进信任列表，之后自动加载；
-- 想撤销信任：`:trust` 查看/管理。
+- Untrusted → skipped silently, configuration not applied;
+- Choosing to trust writes it into the trust list, after which it loads automatically;
+- To revoke trust: `:trust` to inspect/manage.
 
-因为文件是可执行 Lua，信任是必须的一步；`.nvim.lua` 里可以做任何事，不限于本节列出的 API。
+Because the file is executable Lua, trusting it is a required step; `.nvim.lua`
+can do anything, not just the API listed here.
 
-## 生效时机
+## When it takes effect
 
-| 事件 | 行为 |
+| Event | Behaviour |
 |---|---|
-| `VimEnter` | 启动时按当前 tab 的根加载 |
-| `TabEnter` | 切 tab → 卸载旧工作区配置、加载新工作区的 |
-| `DirChanged` | `:tcd` / `:cd` 换了根 → 同上 |
-| `User TabWorkspaceRoot` | `<leader>lws` / `lwr` / `lwR` 改了根 → 同上 |
-| `User TabWorkspaceName` | `<leader>lwN` 改了工作区别名 → 只刷新状态栏名字，不重扫根 |
-| 会话恢复 `post_load` | 恢复完各 tab 的根之后同步一次 |
-| `BufReadPost` / `FileType` | 新打开的文件若在根下，自动套用 `w.opt` 与 `w.map` |
+| `VimEnter` | load for the root of the current tab at startup |
+| `TabEnter` | switch tab → unload the old workspace config, load the new one's |
+| `DirChanged` | `:tcd` / `:cd` changed the root → same as above |
+| `User TabWorkspaceRoot` | `<leader>lws` / `lwr` / `lwR` changed the root → same as above |
+| `User TabWorkspaceName` | `<leader>lwN` renamed the workspace → only refreshes the statusline name, no root rescan |
+| Session restore `post_load` | sync once after every tab's root has been restored |
+| `BufReadPost` / `FileType` | a newly opened file under the root automatically gets `w.opt` and `w.map` applied |
 
-作用域判定看**文件路径是否在根下**，不是"当前 tab 的 buffer 列表"，所以后台载入的 buffer 也正确。
+Scope is decided by **whether the file path is under the root**, not by "the
+current tab's buffer list", so buffers loaded in the background work too.
 
 ## API
 
-所有 API 都在文件顶部的局部变量 `w` 上（进入文件时已预置，不用 require）。
+All APIs live on the local variable `w` defined at the top of the file
+(preset when the file is entered; no require needed).
 
 ### `w.opt(table)`
 
-根目录下所有 buffer 的 **buffer-local** 选项。已打开的 buffer 立即生效，之后打开的自动生效。
+**Buffer-local** options for every buffer under the root. Already open buffers
+take effect immediately; later ones automatically.
 
 ```lua
 w.opt({ tabstop = 4, shiftwidth = 4, expandtab = false, textwidth = 100 })
 ```
 
-回滚：每个 buffer 恢复到**它自己**加载时的原值（不是全局值）。同一 buffer 被重复设置只记第一次的原值。
+Rollback: each buffer is restored to **its own** original value at load time
+(not the global value). Setting the same buffer twice records only the first
+original value.
 
 ### `w.global_opt(table)`
 
-全局选项（`vim.o` 级别）。适合 `spelllang`、`path`、`grepprg` 这类没有 buffer-local 版本的选项。
+Global options (`vim.o` level). Suitable for `spelllang`, `path`, `grepprg` and
+similar options that have no buffer-local version.
 
 ```lua
 w.global_opt({ spelllang = { "cjk", "en" } })
 w.global_opt({ grepprg = "rg --vimgrep" })
 ```
 
-回滚：恢复设置前的原值（数组型选项也按原样恢复）。
+Rollback: restore the value from before the change (list-style options are also
+restored as-is).
 
 ### `w.au(event, opts?, fn)`
 
-自动命令，挂在工作区自己的 augroup 里，**离开工作区时整个 augroup 被删除**，不需要你清理。
+Autocommand placed in the workspace's own augroup; **the whole augroup is
+deleted when leaving the workspace**, so no cleanup on your side.
 
 ```lua
 w.au("BufWritePre", { pattern = "*.rs" }, function(args)
   vim.lsp.buf.format({ bufnr = args.buf })
 end)
 
-w.au({ "BufEnter", "FocusGained" }, function() end) -- 无 opts 的简写
+w.au({ "BufEnter", "FocusGained" }, function() end) -- shorthand without opts
 ```
 
 ### `w.cmd(name, fn, opts?)`
 
-用户命令。离开时删除。
+User command. Deleted on leave.
 
 ```lua
 w.cmd("Build", function(args)
   vim.cmd("!make " .. args.args)
-end, { nargs = "*", desc = "构建当前项目" })
+end, { nargs = "*", desc = "Build current project" })
 ```
 
-命令名是全局的：如果同名命令已存在（别的插件或另一个工作区），会跳过并提示，不会覆盖。
+Command names are global: if a command with the same name already exists (from
+another plugin or another workspace) it is skipped with a notice instead of
+being overwritten.
 
 ### `w.map(modes, lhs, rhs, opts?)`
 
-根下所有 buffer 的 buffer-local 键位。离开时删除。
+Buffer-local keymaps for every buffer under the root. Deleted on leave.
 
 ```lua
-w.map("n", "<leader>B", "<cmd>Build<cr>", { desc = "构建" })
+w.map("n", "<leader>B", "<cmd>Build<cr>", { desc = "Build" })
 w.map({ "n", "v" }, "<leader>F", function() ... end)
 ```
 
-注意这里是 **buffer-local**：不会占用全局键位，也不会在别的项目里误触。
+Note these are **buffer-local**: they do not occupy global keys and cannot be
+triggered accidentally in other projects.
 
 ### `w.task(spec)`
 
-登记一个任务，出现在 overseer 的 `:OverseerRun`（`<leader>ru`）列表里。离开工作区后从列表消失。
+Register a task that appears in overseer's `:OverseerRun` (`<leader>ru`) list.
+It disappears from the list after leaving the workspace.
 
-| 字段 | 必填 | 说明 |
+| Field | Required | Description |
 |---|---|---|
-| `name` | ✅ | 列表里显示的名字 |
-| `cmd` | ✅ | 命令行，字符串（走 shell）或数组（直接 spawn） |
-| `args` | | 参数数组，追加在 `cmd` 后面 |
-| `cwd` | | 工作目录，默认 `${workspaceFolder}` |
-| `env` | | 环境变量表 |
-| `components` | | overseer 组件，默认 `{ "default" }`；要快速修复加 `"on_output_quickfix"` |
-| `desc` / `tags` / `condition` | | 原样传给 overseer |
+| `name` | ✅ | Name shown in the list |
+| `cmd` | ✅ | Command line, either a string (via shell) or a list (spawned directly) |
+| `args` | | Argument list appended after `cmd` |
+| `cwd` | | Working directory, defaults to `${workspaceFolder}` |
+| `env` | | Environment variable table |
+| `components` | | overseer components, defaults to `{ "default" }`; add `"on_output_quickfix"` for a quickfix |
+| `desc` / `tags` / `condition` | | passed to overseer unchanged |
 
 ```lua
-w.task({ name = "构建", cmd = { "cargo", "build" }, components = { "default", "on_output_quickfix" } })
+w.task({ name = "Build", cmd = { "cargo", "build" }, components = { "default", "on_output_quickfix" } })
 w.task({
-  name = "跑当前测试",
+  name = "Run current test",
   cmd = { "cargo", "test" },
   args = { "${fileBasenameNoExtension}" },
   env = { RUST_BACKTRACE = "1" },
 })
 ```
 
-`${...}` 在**任务启动那一刻**展开（所以 `${file}` 是触发时的 buffer）。
+`${...}` is expanded **at the moment the task starts** (so `${file}` is the
+buffer at trigger time).
 
 ### `w.launch(spec)`
 
-登记一个调试配置，注入 `dap.configurations[filetype]`，`:DapContinue` 列表里可选。离开时按引用摘除。
+Register a debug configuration, injected into `dap.configurations[filetype]`,
+selectable from `:DapContinue`. Removed by reference on leave.
 
-除 `filetype`（用于选择注入到哪个 filetype 的配置列表）外，其余字段就是标准 nvim-dap 配置，原样透传：
+Apart from `filetype` (which configuration list to inject into), the remaining
+fields are a standard nvim-dap configuration, passed through unchanged:
 
 ```lua
 w.launch({
-  name = "调试当前文件",
+  name = "Debug current file",
   filetype = "rust",
   type = "codelldb",
   request = "launch",
@@ -146,77 +166,86 @@ w.launch({
 })
 ```
 
-占位符**不展开**，交给 nvim-dap 运行时处理（它认 `${file}`、`${workspaceFolder}`、`${fileBasename}`、
-`${fileDirname}`、`${env:VAR}` 等）。因为 `${workspaceFolder}` 在 nvim-dap 里取的是当前 cwd，而工作区的
-cwd 就是它的根，所以两者天然一致。
+Placeholders are **not** expanded here; they are left to nvim-dap at runtime
+(it knows `${file}`, `${workspaceFolder}`, `${fileBasename}`, `${fileDirname}`,
+`${env:VAR}`, etc.). Because nvim-dap resolves `${workspaceFolder}` to the
+current cwd, and the workspace cwd is its root, the two are naturally
+consistent.
 
-## 占位符
+## Placeholders
 
-任务里支持（调试配置交给 nvim-dap）：
+Supported in tasks (debug configurations are left to nvim-dap):
 
-| 占位符 | 展开为 |
+| Placeholder | Expands to |
 |---|---|
-| `${workspaceFolder}` | 工作区根 |
-| `${workspaceFolderBasename}` | 根的末段 |
-| `${file}` | 触发时的 buffer 完整路径 |
-| `${fileBasename}` | 文件名 |
-| `${fileBasenameNoExtension}` | 文件名去扩展名 |
-| `${fileDirname}` | buffer 所在目录 |
-| `${fileExtname}` | 扩展名 |
+| `${workspaceFolder}` | workspace root |
+| `${workspaceFolderBasename}` | last path segment of the root |
+| `${file}` | full path of the buffer at trigger time |
+| `${fileBasename}` | file name |
+| `${fileBasenameNoExtension}` | file name without extension |
+| `${fileDirname}` | directory containing the buffer |
+| `${fileExtname}` | file extension |
 
-未知占位符原样保留，不做猜测替换。
+Unknown placeholders are kept verbatim; no guessing.
 
-## 回滚边界
+## Rollback boundaries
 
-| 登记方式 | 离开时 |
+| Registration | On leave |
 |---|---|
-| `w.opt` | 每个 buffer 恢复自己的原值 |
-| `w.global_opt` | 恢复原值 |
-| `w.au` | augroup 整体删除 |
+| `w.opt` | each buffer is restored to its own original value |
+| `w.global_opt` | original value restored |
+| `w.au` | the whole augroup is deleted |
 | `w.cmd` | `:delcommand` |
 | `w.map` | `nvim_buf_del_keymap` |
-| `w.task` | 从 overseer 模板列表消失 |
-| `w.launch` | 从 `dap.configurations` 摘除 |
+| `w.task` | disappears from the overseer template list |
+| `w.launch` | removed from `dap.configurations` |
 
-**不保证回滚的**（刻意）：直接写 `vim.o`、`vim.keymap.set`（全局）、改 `runtimepath`、装 autocmd 到别人的
-augroup、后台定时器。这些没有登记，没法精确撤销——文件开头就写了这条。需要可回滚就用 `w.*`。
+**Not guaranteed to roll back** (deliberately): writing `vim.o` directly, global
+`vim.keymap.set`, changing `runtimepath`, installing autocommands in someone
+else's augroup, background timers. These are unregistered and cannot be undone
+precisely — the file says so at the top. Use `w.*` when you need rollback.
 
-`vim.secure.read` 未信任、或语法错误时：不加载任何一项（不会留半套配置），错误进 `:messages`。
+When `vim.secure.read` is untrusted or the file has a syntax error: nothing is
+loaded (no half-applied config), and the error goes to `:messages`.
 
-## 示例：一个 Rust 项目
+## Example: a Rust project
 
 ```lua
 -- .nvim.lua
 w.opt({ tabstop = 4, shiftwidth = 4, textwidth = 100 })
 
-w.task({ name = "构建", cmd = { "cargo", "build" }, components = { "default", "on_output_quickfix" } })
-w.task({ name = "全部测试", cmd = { "cargo", "test" }, components = { "default", "on_output_quickfix" } })
+w.task({ name = "Build", cmd = { "cargo", "build" }, components = { "default", "on_output_quickfix" } })
+w.task({ name = "All tests", cmd = { "cargo", "test" }, components = { "default", "on_output_quickfix" } })
 w.task({ name = "Clippy", cmd = { "cargo", "clippy", "--all-targets" } })
 
 w.launch({
-  name = "调试可执行文件",
+  name = "Debug executable",
   filetype = "rust",
   type = "codelldb",
   request = "launch",
   program = "${workspaceFolder}/target/debug/app",
 })
 
-w.map("n", "<leader>B", "<cmd>OverseerRun<cr>", { desc = "本项目任务" })
+w.map("n", "<leader>B", "<cmd>OverseerRun<cr>", { desc = "Project tasks" })
 ```
 
-## 示例：monorepo 里只给子项目配置
+## Example: configuring only a subproject in a monorepo
 
-`repo/packages/api/.nvim.lua` 只在该子目录成为工作区根时生效。在 `repo/` 开工作区则完全不加载——
-没有"向上继承"，避免一个大仓库的配置偷偷影响所有子项目。
+`repo/packages/api/.nvim.lua` only applies when that subdirectory becomes the
+workspace root. Opening a workspace at `repo/` does not load it at all — there
+is no "inherit upwards", which prevents one big repository's config from
+silently affecting every subproject.
 
-## 排查
+## Troubleshooting
 
-| 症状 | 检查 |
+| Symptom | Check |
 |---|---|
-| 配置没生效 | `:messages` 有无 `工作区配置: ...`；根是否真的是该目录（`:pwd` / statusline）；文件是否被 `:trust` |
-| 切走后选项还留着 | 是否用了 `w.*` 以外的写法直接改选项 |
-| 任务没出现 | `<leader>ru` 里看列表；`w.task` 是否漏了 `cmd`；overseer 是否加载 |
-| 调试配置没出现 | `filetype` 是否写对（按当前 buffer 的 `:set ft?`）；`:DapContinue` 才列配置 |
+| Config has no effect | Does `:messages` show `workspace config: ...`? Is the root really that directory (`:pwd` / statusline)? Has the file been trusted via `:trust`? |
+| Options remain after switching away | Did you change options directly with something other than `w.*`? |
+| Task does not appear | Check the list in `<leader>ru`; did `w.task` omit `cmd`; is overseer loaded? |
+| Debug configuration does not appear | Is `filetype` correct (check `:set ft?` in the current buffer)? Configurations are only listed in `:DapContinue` |
 
-相关测试：`tests/tab_workspace_local_settings.lua`（进项目生效 / 新 buffer 生效 / 切走全量还原 /
-切回重新生效 / 任务与调试注入摘除 / 语法错误不留半套配置）。
+Related tests: `tests/tab_workspace_local_settings.lua` (applies on entering
+the project / on new buffers / full restore on leaving / reapplies on return /
+tasks and debug injections removed / a syntax error leaves no half-applied
+config).

@@ -1,93 +1,106 @@
-# tab-workspace.nvim —— 一 tab 一工作区
+# tab-workspace.nvim — one tab, one workspace
 
-## 模型
+## Model
 
-一个 **tab = 一个工作区**，没有额外的"工作区实体/注册表"：
+One **tab = one workspace**, with no extra "workspace entity / registry":
 
-| 维度 | 载体 |
+| Dimension | Carrier |
 |---|---|
-| 根目录 | tab 作用域的 `:tcd`（`root.lua` 里 `pinned` 显式锁定、`prev` 回退点） |
-| buffer 归属 | `state.lua` 的 `tab -> bufnr 集合`；`buflisted` 只反映当前 tab |
-| 语言服务 | `lsp.lua`：离开 tab 延迟停掉它独占的 client，回来再拉起 |
-| 持久化 | resession 会话（v2 格式：按 tab 顺序存 `{ root, names, aux }`） |
-| 本地配置 | `<根>/.nvim.lua`，进入工作区加载、离开逐项回滚（`local_settings.lua`） |
-| 辅助根 | `roots.lua`：一个工作区 = 1 个主根（cwd）+ N 个辅助根 |
-| UI 锚点 | statusline 左侧 `🖿 名字 n/N +M`（M = 辅助根数量），名字 = 根目录末段 |
+| Root directory | Tab-scoped `:tcd` (`pinned` explicit lock and `prev` fallback point in `root.lua`) |
+| Buffer membership | `tab -> bufnr set` in `state.lua`; `buflisted` reflects only the current tab |
+| Language servers | `lsp.lua`: stop a tab's exclusive clients after leaving, start them again on return |
+| Persistence | resession sessions (v2 format: `{ root, names, aux }` per tab, in tab order) |
+| Local config | `<root>/.nvim.lua`, loaded on entering a workspace, rolled back item by item on leaving (`local_settings.lua`) |
+| Auxiliary roots | `roots.lua`: one workspace = 1 main root (cwd) + N auxiliary roots |
+| UI anchor | left side of the statusline, `🖿 name n/N +M` (M = number of auxiliary roots), name = last path segment of the root |
 
-设计上刻意没有全局工作区注册表：工作区由 tab 承载。工作区名可以按根目录设别名（跨 tab、跨重启保留），
-但名字只是显示用的标签，不构成额外实体。
+By design there is deliberately no global workspace registry: workspaces are
+carried by tabs. A workspace name can be aliased per root directory (kept
+across tabs and restarts), but the name is only a display label and does not
+form an extra entity.
 
-## 多根（主根 + 辅助根）
+## Multi-root (main root + auxiliary roots)
 
-一个工作区可以有多个根，但**只有主根是 cwd**（Neovim 的 cwd 是单值，`'path'`/`gf`/终端/`:make`
-都跟着它走，`'exrc'` 与依赖 cwd 的插件同理）：
+A workspace can have several roots, but **only the main root is the cwd**
+(Neovim's cwd is a single value; `'path'` / `gf` / terminals / `:make` all
+follow it, as do `'exrc'` and plugins that depend on the cwd):
 
-| 根 | 由谁决定 | 作用 |
+| Root | Decided by | Role |
 |---|---|---|
-| 主根 | `:tcd`（`root.lua` 自动认根 / 手动 `lwn`、`lws`） | cwd、gitignore 标记、新 buffer 归属判定 |
-| 辅助根 | `roots.lua` 的 tab 级列表 | 在 workspace 树里并列展示、`roots.find_root()` 判定 buffer 属于哪个根 |
+| Main root | `:tcd` (`root.lua` auto-detection / manual `lwn`, `lws`) | cwd, gitignore markers, deciding where new buffers belong |
+| Auxiliary roots | tab-level list in `roots.lua` | shown side by side in the workspace tree, `roots.find_root()` decides which root a buffer belongs to |
 
-`roots.reconcile()` 在主根变化时对齐：新主根如果原本在辅助根里就摘掉；旧主根**不会**自动降级成辅助根
-（要不要留是用户的决定）。会话把辅助根写在 `aux` 字段里，载入后恢复。
+`roots.reconcile()` aligns things when the main root changes: if the new main
+root was previously an auxiliary root it is removed from that list; the old
+main root is **not** automatically demoted to an auxiliary root (whether to
+keep it is the user's decision). Sessions store auxiliary roots in the `aux`
+field and restore them on load.
 
-### 树：`integrations/neo_tree.lua`（neo-tree 外部源 `workspace`）
+### Tree: `integrations/neo_tree.lua` (neo-tree external source `workspace`)
 
-一个专门的源，顶格并列展示「主根(main) + 辅助根(aux)」，每行带 `main `/`aux ` 徽标，展开后就是 filesystem 源的
-真实目录内容（同一套过滤、gitignore、嵌套、监听）。实现方式不是重写一套树，而是复用 neo-tree 自己的渲染：
+A dedicated source that shows "main root + auxiliary roots" side by side at the
+top level, each line carrying a `main ` / `aux ` badge; expanding one gives the
+real directory contents of the filesystem source (same filtering, gitignore,
+nesting and watching). It does not reimplement a tree; it reuses neo-tree's own
+rendering:
 
-- `renderer.show_nodes` 一次渲染根列表（`hide_root_node` 时合成根被 skip，真实根顶格）；
-- 展开某个根 → `fs.toggle_directory` → `fs_scan.get_items(state, 根目录, ...)`，`parent_id` 是任意真实目录；
-- `state.path` 仍设为主根（gitignore 标记、`refresh` 只认一个）。
+- `renderer.show_nodes` renders the root list once (with `hide_root_node` the synthetic root is skipped and real roots sit at the top level);
+- expanding a root → `fs.toggle_directory` → `fs_scan.get_items(state, root_dir, ...)`, where `parent_id` is any real directory;
+- `state.path` stays set to the main root (gitignore markers, `refresh` only accepts one).
 
-命令：`<leader>lwt` 或 `:Neotree workspace toggle`（插件配置里也有 `<leader>ew`）。
-辅助根的增删：`<leader>lw+`（`workspace.attach_root`）/ `<leader>lw-`（`workspace.detach_root`）。
+Commands: `<leader>lwt` or `:Neotree workspace toggle` (the plugin config also
+maps `<leader>ew`).
+Adding/removing auxiliary roots: `<leader>lw+` (`workspace.attach_root`) /
+`<leader>lw-` (`workspace.detach_root`).
 
-没做的事（有意）：把辅助根也变成一棵完整树（deep 扫描）会让大仓库开树明显变慢；辅助根默认折叠，
-展开时才扫。
+What is intentionally not done: turning auxiliary roots into full trees (deep
+scan) would noticeably slow down opening a tree in a large repository;
+auxiliary roots are collapsed by default and only scanned on expand.
 
-### 其他模块怎么对待辅助根
+### How other modules treat auxiliary roots
 
-| 模块 | 行为 |
+| Module | Behaviour |
 |---|---|
-| 终端 `tab-terminal.nvim` | 新终端的 cwd = 当前 buffer 所属的根（可能是辅助根），没有文件名时回落到主根；多根树里 `<C-t>` 在该节点目录开终端；侧栏组头显示 `名字 +N` |
-| `.nvim.lua` | **只看主根**：辅助根里的 `.nvim.lua` 不加载（一个工作区只有一份配置） |
-| 会话 | 辅助根写在 `tab_workspace.list[i].aux`，载入时恢复 |
-| 搜索 / `:grep` | 仍按 cwd（主根）；要跨根搜索用 grug-far 手动多路径 |
-| statusline | `名字 n/N +M`，M = 辅助根数量 |
+| Terminal `tab-terminal.nvim` | cwd of a new terminal = root of the current buffer (may be an auxiliary root); falls back to the main root when there is no file name; in the multi-root tree `<C-t>` opens a terminal in that node's directory; the sidebar group header shows `name +N` |
+| `.nvim.lua` | **main root only**: `.nvim.lua` in auxiliary roots is not loaded (one config per workspace) |
+| Sessions | auxiliary roots are stored in `tab_workspace.list[i].aux` and restored on load |
+| Search / `:grep` | still follows the cwd (main root); for cross-root searches use grug-far with multiple paths |
+| statusline | `name n/N +M`, M = number of auxiliary roots |
 
-## 文件职责
+## File responsibilities
 
-| 文件 | 职责 |
+| File | Responsibility |
 |---|---|
-| `util.lua` | 判定什么 buffer / 窗口属于工作区（特殊 buftype、侧栏、会话加载期） |
-| `state.lua` | buffer 归属表、最近访问的 tab |
-| `listed.lua` | `buflisted` 同步（"listed = 当前 tab 可见"的唯一实现） |
-| `lifecycle.lua` | 关闭 buffer、清理已关闭 tab 的孤儿 buffer |
-| `session.lua` | resession 扩展：导出/恢复归属 |
-| `session_guard.lua` | 会话归属校验（防止"存 A 打开成 B"）、autosave 策略 |
-| `store.lua` | 唯一一处 resession 适配层：setup/读写/list/delete/load 侧修正 |
-| `lsp.lua` | 每 tab 的 LSP 生命周期 |
-| `root.lua` | 按当前文件判定项目根（marker / LSP），自动切 tab 根；锁定与回退 |
-| `workspace.lua` | 切根、新建/关闭/切换工作区、保存/载入会话、统一 picker、辅助根增删 |
-| `roots.lua` | 辅助根：attach/detach/clear/会话恢复/主根变化对齐/`find_root` |
-| `integrations/neo_tree.lua` | neo-tree 外部源 `workspace`：主根 + 辅助根并列的多根树 |
-| `local_settings.lua` | `<根>/.nvim.lua` 的加载与回滚；`w.task` / `w.launch` 注册 |
+| `util.lua` | decide which buffers / windows belong to a workspace (special buftypes, sidebars, session loading) |
+| `state.lua` | buffer membership table, most recently visited tab |
+| `listed.lua` | `buflisted` synchronisation (the only implementation of "listed = visible in the current tab") |
+| `lifecycle.lua` | close buffers, clean up orphans of closed tabs |
+| `session.lua` | resession extension: export / restore membership |
+| `session_guard.lua` | membership validation (prevents "saved as A, opened as B"), autosave policy |
+| `store.lua` | the single resession adapter layer: setup / read-write / list / delete / load-side corrections |
+| `lsp.lua` | per-tab LSP lifecycle |
+| `root.lua` | decide the project root from the current file (marker / LSP), auto-switch the tab root; lock and back |
+| `workspace.lua` | switch root, create / close / switch workspaces, save / load sessions, unified picker, attach/detach auxiliary roots |
+| `roots.lua` | auxiliary roots: attach/detach/clear/session restore/alignment on main-root change/`find_root` |
+| `integrations/neo_tree.lua` | neo-tree external source `workspace`: multi-root tree with main + auxiliary roots side by side |
+| `local_settings.lua` | load and roll back `<root>/.nvim.lua`; `w.task` / `w.launch` registration |
 
-入口是 `lua/tab_workspace/init.lua`（只做 setup、autocmd 与公共 API 转发）。
+The entry point is `lua/tab_workspace/init.lua` (only setup, autocommands and
+public API forwarding).
 
-## 生命周期（谁在什么时候触发）
+## Lifecycle (who fires when)
 
 ```
-BufEnter/BufWinEnter  归属当前 tab + maybe_follow（文件不在根内才切根）
-TabEnter              relist（同步，避免首帧闪烁）→ 下一个事件循环再校归属 + lsp.sync
-TabLeave              记下"上一个 tab"，给 alternate 用
+BufEnter/BufWinEnter  membership in the current tab + maybe_follow (switch root only when the file is outside it)
+TabEnter              relist (synchronous, avoids a first-frame flicker) → validate membership + lsp.sync on the next event loop
+TabLeave              remember the "previous tab" for alternate
 TabClosed             root.prune → schedule(lifecycle.prune + lsp.on_tab_closed)
 DirChanged / User TabWorkspaceRoot / VimEnter
-                      local_settings.sync（加载/回滚 .nvim.lua）
+                      local_settings.sync (load/roll back .nvim.lua)
 resession post_load   session.on_post_load → local_settings.sync
 ```
 
-## 公共 API
+## Public API
 
 ```lua
 local ws = require("tab_workspace")
@@ -102,115 +115,118 @@ ws.find_root(tab, path)  ws.resolve_root(buf?)    ws.is_float_win(win)
 ws.attach_resession()
 ```
 
-键位（`boot/keymaps.lua`）：
+Keymaps (`boot/keymaps.lua`):
 
-| 键 | 动作 |
+| Key | Action |
 |---|---|
-| `<leader>lwn` | 新建工作区（新 tab + 选目录） |
-| `<leader>lwc` | 关闭工作区 |
-| `<leader>lwa` | 在最近两个工作区之间来回 |
-| `<leader>lwl` | 工作区/会话统一列表（打开中的 tab + 已保存会话 + 新目录，也是唯一的“加载会话”入口） |
-| `<leader>lwN` | 重命名工作区（按根目录存别名，落盘；留空回车 = 恢复默认 basename） |
-| `<leader>lst` / `<leader>lss` / `<leader>lsd` | 会话：保存 / 保存 tab / 删除（带确认，跳过当前会话） |
-| `<leader>lws` / `<leader>lwr` / `<leader>lwR` | 锁定根 / 回退到上一个根并锁定 / 解除锁定 |
-| `<leader>lwe` | 编辑当前工作区的 `.nvim.lua` |
-| `<leader>lw+` / `<leader>lw-` | 附加辅助根 / 移除辅助根（主根仍是 cwd） |
-| `<leader>lwt` / `<leader>ew` | 多根树（neo-tree `workspace` 源，面板名 Workspace） |
+| `<leader>lwn` | new workspace (new tab + pick a directory) |
+| `<leader>lwc` | close workspace |
+| `<leader>lwa` | alternate between the two most recent workspaces |
+| `<leader>lwl` | unified workspace/session list (open tabs + saved sessions + new directory; the only entry point for "load session") |
+| `<leader>lwN` | rename workspace (alias stored per root directory, persisted; empty + enter = restore default basename) |
+| `<leader>lst` / `<leader>lss` / `<leader>lsd` | sessions: save / save tab / delete (with confirmation, skipping the current session) |
+| `<leader>lws` / `<leader>lwr` / `<leader>lwR` | pin root / go back to the previous root and pin it / unpin |
+| `<leader>lwe` | edit the current workspace's `.nvim.lua` |
+| `<leader>lw+` / `<leader>lw-` | attach auxiliary root / detach auxiliary root (the main root stays the cwd) |
+| `<leader>lwt` / `<leader>ew` | multi-root tree (neo-tree `workspace` source, panel name Workspace) |
 
-## `.nvim.lua`（工作区本地配置）
+## `.nvim.lua` (workspace-local config)
 
-放在工作区根目录，行为对标 Emacs `.dir-locals.el`、VS Code `.vscode/settings.json`：
-配置跟着目录走，离开工作区时逐项还原。完整参考（全部 `w.*` 参数、占位符、回滚矩阵、示例、排查）
-见 [doc/nvim-lua.md](./doc/nvim-lua.md)，下面只是速览。
+Placed in the workspace root, it behaves like Emacs `.dir-locals.el` or VS Code
+`.vscode/settings.json`: configuration follows the directory and is restored
+item by item when leaving the workspace. The full reference (all `w.*` options,
+placeholders, rollback matrix, examples, troubleshooting) is in
+[doc/nvim-lua.md](./doc/nvim-lua.md); the following is only a quick overview.
 
 ```lua
-w.opt({ tabstop = 4, shiftwidth = 4 })          -- 根下所有 buffer 的 buffer-local 选项
-w.global_opt({ spelllang = { "cjk", "en" } })   -- 全局选项
+w.opt({ tabstop = 4, shiftwidth = 4 })          -- buffer-local options for every buffer under the root
+w.global_opt({ spelllang = { "cjk", "en" } })   -- global options
 w.au("BufWritePre", { pattern = "*.rs" }, function(args) end)
-w.cmd("Build", function(args) end, { desc = "构建" })
-w.map("n", "<leader>B", "<cmd>Build<cr>", { desc = "构建" })
-w.task({ name = "构建", cmd = { "make" }, cwd = "${workspaceFolder}" })
-w.launch({ name = "调试", filetype = "rust", type = "codelldb", request = "launch" })
+w.cmd("Build", function(args) end, { desc = "Build" })
+w.map("n", "<leader>B", "<cmd>Build<cr>", { desc = "Build" })
+w.task({ name = "Build", cmd = { "make" }, cwd = "${workspaceFolder}" })
+w.launch({ name = "Debug", filetype = "rust", type = "codelldb", request = "launch" })
 ```
 
-- **信任**：走 Neovim 的 `:trust`（`vim.secure.read`）。未信任时静默跳过，`:trust` 后重新进入工作区即可。
-- **作用域**：按「文件路径在根下」判定（不是按当前 tab），后台载入的 buffer 也正确；新打开的文件通过
-  `BufReadPost` / `FileType` 自动套用。
-- **回滚**：逐 buffer 恢复原选项 → 恢复全局选项 → 删用户命令 → 删 buffer-local 键位 → 删整个 augroup →
-  从 `dap.configurations` 按引用摘除注入的调试配置。
-- **边界**：只有经 `w.*` 登记的改动有回滚保证；文件里其它任意 Lua 副作用（改 `runtimepath`、装全局键位等）
-  不受保护——这是刻意的，不给"能改一切又都能撤销"的假承诺。
-- `w.task` 接 overseer（`:OverseerRun` / `<leader>ru`），`w.launch` 接 nvim-dap（`:DapContinue`）。
-  任务里的 `${workspaceFolder}` / `${file}` / `${fileBasename}` / `${fileDirname}` 在任务启动时展开；
-  调试配置里的占位符保持原样，交给 nvim-dap 运行时展开（它认同一套变量）。
-- 为什么不用 `'exrc'`：它只在启动时扫一次启动目录，`:tcd` 进别的项目既不加载也不回滚，且执行的是
-  未登记的裸 Lua。设置 `takeover_exrc = true` 后本模块会把 `exrc` 关掉，`.nvim.lua` 由本模块独占。
+- **Trust**: goes through Neovim's `:trust` (`vim.secure.read`). While untrusted the file is skipped silently; re-enter the workspace after `:trust`.
+- **Scope**: decided by "is the file path under the root" (not by the current tab), so buffers loaded in the background work too; newly opened files are picked up through `BufReadPost` / `FileType`.
+- **Rollback**: restore per-buffer original options → restore global options → delete user commands → delete buffer-local keymaps → delete the whole augroup → remove injected debug configurations from `dap.configurations` by reference.
+- **Limits**: only changes registered through `w.*` are guaranteed to roll back; any other Lua side effects in the file (changing `runtimepath`, installing global keymaps, ...) are unprotected — deliberately, to avoid pretending that everything can be undone.
+- `w.task` integrates with overseer (`:OverseerRun` / `<leader>ru`), `w.launch` with nvim-dap (`:DapContinue`).
+  `${workspaceFolder}` / `${file}` / `${fileBasename}` / `${fileDirname}` in tasks are expanded when the task starts;
+  placeholders in debug configurations are left as-is and expanded by nvim-dap at runtime (it knows the same variables).
+- Why not `'exrc'`: it only scans the startup directory once at startup, entering another project via `:tcd` neither loads nor rolls back, and it executes unregistered bare Lua. With `takeover_exrc = true` this module turns `exrc` off so that `.nvim.lua` is exclusively its own.
 
-## 测试
+## Tests
 
 ```sh
 tests/run.sh
-# 或单个：
+# or individually:
 nvim --headless -u NONE -l tests/tab_workspace_root.lua
 nvim --headless -u NONE -l tests/tab_workspace_session.lua
 nvim --headless -u NONE -l tests/tab_workspace_local_settings.lua
 nvim --headless -u NONE -l tests/tab_workspace_roots.lua
-nvim --headless -u NONE -l tests/tab_workspace_multiroots_ux.lua   # 多根用户流程（树/会话/tab）
-nvim --headless -u NONE -l tests/tab_workspace_name.lua            # 工作区别名
-nvim --headless -u NONE -l tests/smoke.lua                         # 不装可选依赖也能 setup
+nvim --headless -u NONE -l tests/tab_workspace_multiroots_ux.lua   # multi-root user flows (tree/session/tab)
+nvim --headless -u NONE -l tests/tab_workspace_name.lua            # workspace aliases
+nvim --headless -u NONE -l tests/smoke.lua                         # setup works without optional deps
 ```
 
-都是"用户视角"的行为测试：只做用户会做的动作（`:edit`、`:tcd`、开 tab、走 API），断言 `getcwd()`、
-`buflisted`、选项值、命令/模板是否存在这类可观察结果，不断言内部实现。
+All of them are "user-perspective" behaviour tests: they only perform actions a
+user would (":edit", ":tcd", open tabs, call the API) and assert observable
+results such as `getcwd()`, `buflisted`, option values, and whether a
+command/template exists — never internal implementation details.
 
 
-## 安装
+## Installation
 
 ```lua
--- vim.pack / lazy.nvim / 手工 packpath 均可
+-- vim.pack / lazy.nvim / manual packpath all work
 require("tab_workspace").setup({
   auto_root = true,
-  root_markers = nil,          -- nil = 用内置通用 marker 列表
-  takeover_exrc = false,       -- true = 关掉 'exrc'，由 .nvim.lua 独占
+  root_markers = nil,          -- nil = use the built-in generic marker list
+  takeover_exrc = false,       -- true = turn off 'exrc', .nvim.lua takes over
   is_server_enabled = nil,     -- fun(name, bufnr): boolean?
-  hide_in_bar = nil,           -- fun(bufnr): boolean?（默认按 buftype）
-  on_change = nil,             -- fun()：buflisted 变化后的重绘
-  excluded_filetypes = nil,    -- table<string, boolean>：不参与归属的侧栏 ft
+  hide_in_bar = nil,           -- fun(bufnr): boolean? (defaults to buftype)
+  on_change = nil,             -- fun(): redraw after buflisted changes
+  excluded_filetypes = nil,    -- table<string, boolean>: sidebar fts excluded from membership
 })
 ```
 
-插件默认**不注册任何键位**，也不 require 任何 UI 插件/侧栏/会话插件。宿主按需接入：
+The plugin registers **no keymaps by default** and does not require any UI,
+sidebar or session plugin. The host wires in what it needs:
 
 ```lua
--- bufferline：插件只改 buflisted，重绘交给宿主
+-- bufferline: the plugin only changes buflisted, redrawing is up to the host
 on_change = function()
   local bl = package.loaded["bufferline"]
   if type(bl) == "table" and type(bl.redraw) == "function" then return bl.redraw() end
   vim.schedule(function() pcall(vim.cmd, "redrawtabline") end)
 end
 
--- lsp_ext.servers 之类的按项目启停
+-- per-project start/stop such as lsp_ext.servers
 is_server_enabled = function(name, bufnr) ... end
 ```
 
-### neo-tree 多根树（可选）
+### neo-tree multi-root tree (optional)
 
-在 neo-tree 的 `sources` 里加 `tab_workspace.integrations.neo_tree`（对应的源名是 `workspace`），
-再把标签页操作接到本插件：
+Add `tab_workspace.integrations.neo_tree` to neo-tree's `sources` (its source
+name is `workspace`), then wire the tab operations to this plugin:
 
 ```lua
 require("neo-tree").setup({ sources = { "filesystem", "tab_workspace.integrations.neo_tree" } })
 vim.keymap.set("n", "<leader>lwt", "<cmd>Neotree workspace toggle<cr>")
 ```
 
-该文件按需加载，核心模块不会 require neo-tree；没装 neo-tree 时其它功能不受影响。
+That file is loaded on demand, the core modules never require neo-tree, and
+everything else keeps working when neo-tree is not installed.
 
-### resession（可选）
+### resession (optional)
 
 ```lua
-require("tab_workspace.store").setup()          -- 唯一一处 resession 适配层
-require("tab_workspace").attach_resession()     -- post_load 钩子
+require("tab_workspace.store").setup()          -- the single resession adapter layer
+require("tab_workspace").attach_resession()     -- post_load hook
 require("tab_workspace.session_guard").setup_autosave({ interval = 60 })
 ```
 
-会话扩展名是 `tab_workspace`（`resession.extensions.tab_workspace`）。
+The session extension name is `tab_workspace`
+(`resession.extensions.tab_workspace`).

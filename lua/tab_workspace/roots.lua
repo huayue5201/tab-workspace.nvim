@@ -207,6 +207,8 @@ function M.find_root(tab, path)
 		return nil
 	end
 	local abs = vim.fn.fnamemodify(path, ":p")
+	local real = vim.uv.fs_realpath(abs)
+	abs = (real or abs):gsub("/+$", "")
 	local best
 	for _, dir in ipairs(M.all(tab)) do
 		if abs == dir or abs:sub(1, #dir + 1) == dir .. "/" then

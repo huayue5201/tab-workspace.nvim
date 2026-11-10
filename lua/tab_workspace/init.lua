@@ -1,7 +1,7 @@
 -- 每 tab 独立工作区：每个 tab 只显示自己的 buffer（bufferline 隔离），
 -- 每个 tab 有独立 cwd（resession 会一并保存/恢复）。
 --
--- 代码布局（lua/feat/tab_workspace/）：
+-- 代码布局（lua/tab_workspace/）：
 --   util.lua      —— buffer / 窗口 / 会话加载状态的判定
 --   state.lua     —— buffer 归属表（tab -> bufnr 集合）、最近访问的 tab
 --   listed.lua    —— buflisted 同步（"listed = 当前 tab 可见" 的唯一实现）

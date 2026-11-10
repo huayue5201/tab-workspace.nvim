@@ -181,7 +181,7 @@ end
 --- `term://` 名字的 buffer 是会把 shell 真拉起来的。旧会话（以及带僵尸 term:// buffer 的会话）
 --- 里有这类条目，表现就是「加载会话时凭空打开一个终端」。
 --- resession 只给 save 提供了 buf_filter，load 没有对应钩子，所以在唯一的读入口
---- （files.load_json_file 的包装，见 lua/feat/tab_workspace/store.lua）上洗一遍。
+--- （files.load_json_file 的包装，见 lua/tab_workspace/store.lua）上洗一遍。
 ---@param data table
 ---@return table
 function M.strip_terminal_bufs(data)

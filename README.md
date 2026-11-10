@@ -157,6 +157,7 @@ nvim --headless -u NONE -l tests/tab_workspace_local_settings.lua
 nvim --headless -u NONE -l tests/tab_workspace_roots.lua
 nvim --headless -u NONE -l tests/tab_workspace_multiroots_ux.lua   # 多根用户流程（树/会话/tab）
 nvim --headless -u NONE -l tests/tab_workspace_name.lua            # 工作区别名
+nvim --headless -u NONE -l tests/smoke.lua                         # 不装可选依赖也能 setup
 ```
 
 都是"用户视角"的行为测试：只做用户会做的动作（`:edit`、`:tcd`、开 tab、走 API），断言 `getcwd()`、

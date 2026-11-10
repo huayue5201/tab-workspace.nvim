@@ -30,7 +30,7 @@
 `roots.reconcile()` 在主根变化时对齐：新主根如果原本在辅助根里就摘掉；旧主根**不会**自动降级成辅助根
 （要不要留是用户的决定）。会话把辅助根写在 `aux` 字段里，载入后恢复。
 
-### 树：`neo_tree.lua`（neo-tree 外部源 `workspace`）
+### 树：`integrations/neo_tree.lua`（neo-tree 外部源 `workspace`）
 
 一个专门的源，顶格并列展示「主根(main) + 辅助根(aux)」，每行带 `main `/`aux ` 徽标，展开后就是 filesystem 源的
 真实目录内容（同一套过滤、gitignore、嵌套、监听）。实现方式不是重写一套树，而是复用 neo-tree 自己的渲染：
@@ -121,7 +121,7 @@ ws.attach_resession()
 
 放在工作区根目录，行为对标 Emacs `.dir-locals.el`、VS Code `.vscode/settings.json`：
 配置跟着目录走，离开工作区时逐项还原。完整参考（全部 `w.*` 参数、占位符、回滚矩阵、示例、排查）
-见 [nvim-lua.md](./nvim-lua.md)，下面只是速览。
+见 [doc/nvim-lua.md](./doc/nvim-lua.md)，下面只是速览。
 
 ```lua
 w.opt({ tabstop = 4, shiftwidth = 4 })          -- 根下所有 buffer 的 buffer-local 选项

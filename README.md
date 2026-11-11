@@ -274,7 +274,36 @@ require("tab_workspace").setup({
   lsp_stop_on_leave = true,    -- stop clients the tab no longer uses after leaving
   lsp_restart_on_enter = true, -- restart them when coming back
   lsp_stop_delay = 5000,       -- ms to wait before stopping (covers fast tab switching)
+
+  guard_cwd = true,            -- recover from a deleted cwd (see below)
 })
+```
+
+### Deleted cwd recovery
+
+Neovim keeps per-tab cwds and `chdir`s when you switch tabs, but nothing checks
+that those directories still exist. Two very different symptoms follow:
+
+- **Invalid process cwd** — nvim was started from a directory that no longer
+exists (a close Terminal window, a removed worktree, a cleaned `/tmp`).
+`vim.uv.cwd()` returns `nil` and `vim.fn.getcwd()` returns `""`, so every
+plugin that touches cwd during `setup()` fails at its first assert: lazydev and
+obsidian `assert(uv.cwd())`, neogit `cwd:gsub(...)`, procman `fs_scandir(nil)`,
+codecompanion `vim.fs.abspath`, and fff misreads the empty path as “scan `/`”.
+- **Stale tab cwd** — a tab's `:tcd` target was deleted afterwards. Switching to
+it makes `chdir` fail silently: the process stays in the previous tab's
+directory, so new files, terminals and LSP roots all land in the wrong project.
+
+`guard_cwd` (on by default) repairs both: `setup()` fixes an invalid process cwd
+before anything else, and `TabEnter` re-checks each tab's `:tcd` value, falling
+back to (in order) the tab's last valid cwd, the directory of a file shown in
+that tab, `$HOME`, `$XDG_CONFIG_HOME`, then the nvim executable's directory —
+with a single warning so you know it happened. Because the failures above occur
+inside other plugins' `setup()`, call the guard early if you load plugins before
+`tab_workspace`:
+
+```lua
+require("tab_workspace.cwd_guard").ensure()  -- idempotent; no autocmds registered
 ```
 
 The plugin registers **no keymaps by default** and does not require any UI,

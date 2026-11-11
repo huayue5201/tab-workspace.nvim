@@ -13,6 +13,7 @@
 --   session_guard.lua —— 会话归属校验与 autosave 策略
 --   store.lua     —— 唯一一处 resession 适配层（setup/读写/load 侧修正）
 --   local_settings.lua —— 工作区本地配置（<根>/.nvim.lua）的加载与回滚
+--   cwd_guard.lua —— cwd 失效（目录被删）的自愈：启动时 + 切 tab 时
 -- 本文件只留公共 API 与 setup/autocmd/resession 挂接。
 local util = require("tab_workspace.util")
 local state = require("tab_workspace.state")
@@ -24,6 +25,7 @@ local workspace = require("tab_workspace.workspace")
 local root = require("tab_workspace.root")
 local roots = require("tab_workspace.roots")
 local local_settings = require("tab_workspace.local_settings")
+local cwd_guard = require("tab_workspace.cwd_guard")
 
 local M = {}
 
@@ -68,6 +70,7 @@ M.export = session.export
 M.rebuild = session.rebuild
 M.is_workspace_buf = util.is_managed_buf
 M.is_managed_buf = util.is_managed_buf
+M.guard_cwd = cwd_guard.ensure
 
 ---@class TabWorkspaceConfig
 ---@field lsp_stop_on_leave boolean 离开 tab 后是否停掉它不再用的 LSP client
@@ -79,7 +82,8 @@ M.is_managed_buf = util.is_managed_buf
 ---@field hide_in_bar fun(bufnr: integer): boolean? 该 buffer 是否不占 bufferline 一格（默认按 buftype）
 ---@field on_change fun()? buflisted 变化后的重绘回调（默认 redrawtabline）
 ---@field excluded_filetypes table<string, boolean>? 不参与工作区归属的 filetype
----@field takeover_exrc boolean 是否接管 'exrc'（默认 false；工作区配置模块会关掉它）
+---@field takeover_exrc boolean 是否接管 'exrc'（默认 false；工作区配置模块会关掉它)
+---@field guard_cwd boolean cwd 失效（目录被删）时是否自动切到有效目录（默认 true）
 
 ---@param opts? TabWorkspaceConfig
 function M.setup(opts)
@@ -90,7 +94,10 @@ function M.setup(opts)
 		auto_root = true,
 		root_markers = nil,
 		takeover_exrc = false,
+		guard_cwd = true,
 	}, M.config or {}, opts or {})
+	-- 必须最先跑：cwd 失效时，后面每个 setup 里读 cwd 的插件都会连环报错
+	cwd_guard.setup({ enabled = M.config.guard_cwd })
 	lsp.configure(M.config)
 	root.setup({ enabled = M.config.auto_root, markers = M.config.root_markers })
 	listed.configure({ hide_in_bar = M.config.hide_in_bar, on_change = M.config.on_change })

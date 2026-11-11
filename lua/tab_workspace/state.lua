@@ -6,8 +6,9 @@ local M = {}
 
 ---@type table<integer, table<integer, true>>
 local owned = {}
----@type integer|nil
-local last_tab
+--- 最近访问的 tab，最近在前（含当前 tab）；失效的 tab 在读取时剪掉
+---@type integer[]
+local recent = {}
 
 --- 把 buffer 归到 tab。移动语义：一个 buffer 只属于一个 tab（最近出现的地方）。
 ---@param tab integer
@@ -168,14 +169,35 @@ function M.visible_set(tab)
 	return set
 end
 
----@return integer|nil
-function M.last_tab()
-	return last_tab
+--- 记录一个 tab 被访问过（离开 tab 时调用），已存在的会被提到最前
+---@param tab integer
+function M.touch(tab)
+	if not tab or not vim.api.nvim_tabpage_is_valid(tab) then
+		return
+	end
+	M.recent_tabs()
+	local out = { tab }
+	for _, other in ipairs(recent) do
+		if other ~= tab then
+			out[#out + 1] = other
+		end
+	end
+	recent = out
 end
 
----@param tab integer|nil
-function M.set_last_tab(tab)
-	last_tab = (tab and vim.api.nvim_tabpage_is_valid(tab)) and tab or nil
+--- 最近访问的 tab，最近在前；已关闭/失效的自动剔除
+---@return integer[]
+function M.recent_tabs()
+	local out = {}
+	local seen = {}
+	for _, tab in ipairs(recent) do
+		if not seen[tab] and vim.api.nvim_tabpage_is_valid(tab) then
+			seen[tab] = true
+			out[#out + 1] = tab
+		end
+	end
+	recent = out
+	return out
 end
 
 return M

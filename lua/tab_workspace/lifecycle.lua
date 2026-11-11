@@ -26,9 +26,6 @@ function M.prune()
 			end
 		end
 	end
-	if state.last_tab() and not valid[state.last_tab()] then
-		state.set_last_tab(nil)
-	end
 
 	-- 会话加载期间 tab 会被成批关掉/重建，还要按名字恢复 buffer：只清归属，不删 buffer
 	if util.resession_loading() then

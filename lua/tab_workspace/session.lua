@@ -266,7 +266,6 @@ function M.on_post_load()
 	else
 		M.rebuild()
 	end
-	state.set_last_tab(nil)
 end
 
 return M

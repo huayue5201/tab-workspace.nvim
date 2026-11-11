@@ -37,39 +37,35 @@ local GROUP = "TabWorkspace"
 -- 是否已在 setup 里挂过 resession 钩子
 local attached = false
 
--- 公共 API：实现委托给内部模块
-M.relist = listed.relist
-M.visible_buffers = listed.visible_buffers
-M.close_buffer = lifecycle.close_buffer
-M.set_root = workspace.set_root
-M.prompt_root = workspace.prompt_root
-M.rename_workspace = workspace.rename_workspace
-M.set_workspace_name = workspace.set_workspace_name
-M.save_session = workspace.save_session
-M.load_session = workspace.load_session
+-- 公共 API：只留「操作/查询工作区状态」的入口，实现委托给内部模块。
+-- 纯谓词（is_float_win、is_managed_buf 等）在 tab_workspace.util 里，不在这里重复。
+M.picker = workspace.picker
+M.tab_items = workspace.tab_items
+M.goto_tab = workspace.goto_tab
+M.alternate = workspace.alternate
 M.new_workspace = workspace.new_workspace
 M.close_workspace = workspace.close_workspace
-M.picker = workspace.picker
+M.rename_workspace = workspace.rename_workspace
+M.set_workspace_name = workspace.set_workspace_name
+M.workspace_name = root.name
+M.root = root.cwd
+M.set_root = workspace.set_root
+M.prompt_root = workspace.prompt_root
+M.root_back = root.back
+M.root_unpin = root.unpin
+M.root_pinned = root.pinned
+M.attach_root = workspace.attach_root
+M.detach_root = workspace.detach_root
+M.aux_roots = roots.aux
+M.find_root = roots.find_root
+M.workspace_tree = workspace.tree
+M.visible_buffers = listed.visible_buffers
+M.close_buffer = lifecycle.close_buffer
+M.save_session = workspace.save_session
+M.load_session = workspace.load_session
 M.delete_session = workspace.delete_session
 M.edit_local_settings = local_settings.edit
 M.reload_local_settings = local_settings.reload
-M.alternate = workspace.alternate
-M.attach_root = workspace.attach_root
-M.detach_root = workspace.detach_root
-M.roots = workspace.roots
-M.workspace_tree = workspace.tree
-M.resolve_root = root.resolve
-M.root_back = root.back
-M.root_unpin = root.unpin
-M.root = root.cwd
-M.workspace_name = root.name
-M.aux_roots = roots.aux
-M.find_root = roots.find_root
-M.is_float_win = util.is_float_win
-M.export = session.export
-M.rebuild = session.rebuild
-M.is_workspace_buf = util.is_managed_buf
-M.is_managed_buf = util.is_managed_buf
 M.guard_cwd = cwd_guard.ensure
 
 ---@class TabWorkspaceConfig
@@ -158,12 +154,12 @@ function M.setup(opts)
 		end,
 	})
 
-	-- 记住切走前的 tab，用于 :TabWorkspaceAlternate
+	-- 记住切走前的 tab，用于 alternate / tab_items 的最近使用排序
 	vim.api.nvim_create_autocmd("TabLeave", {
 		group = group,
 		callback = function()
 			if not util.resession_loading() then
-				state.set_last_tab(vim.api.nvim_get_current_tabpage())
+				state.touch(vim.api.nvim_get_current_tabpage())
 			end
 		end,
 	})

@@ -297,6 +297,13 @@ function M.pin_of(tab)
 	return pinned[tab]
 end
 
+--- tab 的根是否被锁定（<leader>lwp 手动定死后不自动跟随）
+---@param tab? integer
+---@return boolean
+function M.pinned(tab)
+	return pinned[tab or vim.api.nvim_get_current_tabpage()] ~= nil
+end
+
 --- 记录手动根（不放行自动切换）
 ---@param tab integer
 ---@param dir string

@@ -93,42 +93,105 @@ function M.save_session()
 	store.save_all({ notify = false })
 end
 
---- 工作区 / 会话统一选择器
+--- 工作区（tab）列表：列表切换的唯一数据源，也开放给用户自建 UI。
 ---
---- 列表 = 已打开的 tab（工作区） + 已保存但未打开的会话 + 「打开新目录」。
---- 选择已打开的 tab → 切过去；选择会话 → 新开 tab 里载入（不顶掉当前工作区）；
---- 选择「打开新目录」→ 走 new_workspace（会先保存当前会话）。
----@param opts? table
-function M.picker(opts)
+--- 默认按最近使用排序（当前 tab 在前，其余按最近访问，没访问过的补在末尾）；
+--- 传 `{ order = "number" }` 按 tab 序号排。切 tab 时 tab 序号会变，所以序号只用来显示。
+---@class TabWorkspaceItem
+---@field tab integer tabpage handle
+---@field number integer tab 序号（从 1 开始）
+---@field name string 工作区名（别名 > 根目录末段）
+---@field dir string 根目录（家目录写成 ~）
+---@field buffers integer 该 tab 的 buffer 数
+---@field current boolean 是否是当前 tab
+
+---@param opts? { order?: "recent"|"number" }
+---@return TabWorkspaceItem[]
+function M.tab_items(opts)
 	opts = opts or {}
 	local root = require("tab_workspace.root")
-	local ok_state, tab_state = pcall(require, "tab_workspace.state")
+	local current = vim.api.nvim_get_current_tabpage()
+	local tabs, seen = {}, {}
+	local function add(tab)
+		if not seen[tab] then
+			seen[tab] = true
+			tabs[#tabs + 1] = tab
+		end
+	end
+
+	if opts.order == "number" then
+		for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+			add(tab)
+		end
+	else
+		add(current)
+		for _, tab in ipairs(state.recent_tabs()) do
+			add(tab)
+		end
+		for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+			add(tab)
+		end
+	end
+
+	local items = {}
+	for _, tab in ipairs(tabs) do
+		items[#items + 1] = {
+			tab = tab,
+			number = vim.api.nvim_tabpage_get_number(tab),
+			name = root.name(tab),
+			dir = vim.fn.fnamemodify(root.cwd(tab), ":~"),
+			buffers = #state.tab_buffers(tab),
+			current = tab == current,
+		}
+	end
+	return items
+end
+
+--- 切到某个工作区（tab）：接受 tabpage handle、tab 序号、或 tab_items() 的条目
+---@param target integer|TabWorkspaceItem
+---@return boolean 是否切换成功
+function M.goto_tab(target)
+	local tab = type(target) == "table" and target.tab or target
+	if type(tab) ~= "number" then
+		return false
+	end
+	if not vim.api.nvim_tabpage_is_valid(tab) then
+		tab = vim.api.nvim_list_tabpages()[tab]
+	end
+	if not tab or not vim.api.nvim_tabpage_is_valid(tab) then
+		return false
+	end
+	vim.api.nvim_set_current_tabpage(tab)
+	return true
+end
+
+--- 工作区 / 会话统一选择器
+---
+--- 列表 = 已打开的 tab（工作区，最近使用的在前） + 已保存但未打开的会话 + 「打开新目录」。
+--- 选择已打开的 tab → 切过去；选择会话 → 新开 tab 里载入（不顶掉当前工作区）；
+--- 选择「打开新目录」→ 走 new_workspace（会先保存当前会话）。
+---@param opts? table 除 store 的选项（如 dir）外：`select` 可换成自己的选择器，
+--- 签名与 vim.ui.select 相同（默认就是它）
+function M.picker(opts)
+	opts = opts or {}
+	local select = opts.select or vim.ui.select
+	local root = require("tab_workspace.root")
 	local ok_guard, guard = pcall(require, "tab_workspace.session_guard")
-	local current_tab = vim.api.nvim_get_current_tabpage()
 
 	local items = {}
 	local open_roots = {}
 
-	-- 1. 已打开的工作区（按 tab 顺序）
-	for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-		local dir = root.cwd(tab)
-		open_roots[(dir:gsub("/+$", ""))] = true
-		items[#items + 1] = {
-			kind = "tab",
-			tab = tab,
-			number = vim.api.nvim_tabpage_get_number(tab),
-			label = root.name(tab),
-			dir = vim.fn.fnamemodify(dir, ":~"),
-			buffers = ok_state and #tab_state.tab_buffers(tab) or 0,
-			current = tab == current_tab,
-		}
+	-- 1. 已打开的工作区（最近使用的在前）
+	for _, item in ipairs(M.tab_items()) do
+		open_roots[(root.cwd(item.tab):gsub("/+$", ""))] = true
+		item.kind = "tab"
+		items[#items + 1] = item
 	end
 
 	-- 2. 已保存、但根目录还没被任何 tab 打开的会话（最近的在前）
 	local store = require("tab_workspace.store")
-	local sessions = store.list({ dir = opts.dir })
 	local saved = {}
-	for _, name in ipairs(sessions) do
+	for _, name in ipairs(store.list({ dir = opts.dir })) do
 		local data = ok_guard and guard.read(name, opts) or nil
 		local opened = false
 		if ok_guard and type(data) == "table" then
@@ -173,7 +236,7 @@ function M.picker(opts)
 				"%s %d  %s  %s  %d buf",
 				item.current and "●" or "○",
 				item.number,
-				item.label,
+				item.name,
 				item.dir,
 				item.buffers
 			)
@@ -181,7 +244,7 @@ function M.picker(opts)
 		return string.format("·    %s  %s", item.name, item.dir)
 	end
 
-	vim.ui.select(items, {
+	select(items, {
 		prompt = "Workspace",
 		format_item = format_item,
 	}, function(item)
@@ -189,9 +252,7 @@ function M.picker(opts)
 			return
 		end
 		if item.kind == "tab" then
-			if vim.api.nvim_tabpage_is_valid(item.tab) then
-				vim.api.nvim_set_current_tabpage(item.tab)
-			end
+			M.goto_tab(item)
 		elseif item.kind == "session" then
 			-- 新开一个 tab 再载入：tab 作用域会话会复用「干净的当前 tab」，
 			-- 直接载入会把当前工作区顶掉。
@@ -301,15 +362,15 @@ function M.close_workspace()
 	M.save_session()
 end
 
---- 在当前 tab 与上一个 tab 之间切换
+--- 在当前 tab 与上一个 tab 之间切换（多步切换用 picker / tab_items）
 function M.alternate()
-	local last = state.last_tab()
-	if not last or not vim.api.nvim_tabpage_is_valid(last) or last == vim.api.nvim_get_current_tabpage() then
-		-- 上一个 tab 已经关掉了：清掉记录，别留一个永远失效的目标
-		state.set_last_tab(nil)
-		return
+	local current = vim.api.nvim_get_current_tabpage()
+	for _, tab in ipairs(state.recent_tabs()) do
+		if tab ~= current then
+			vim.api.nvim_set_current_tabpage(tab)
+			return
+		end
 	end
-	vim.api.nvim_set_current_tabpage(last)
 end
 
 -- ================= 辅助根（主根 + N 辅助根）=================
@@ -365,12 +426,6 @@ function M.detach_root(dir)
 			roots.detach(tab, choice)
 		end
 	end)
-end
-
---- 当前工作区的根列表（主根在前）
----@return string[]
-function M.roots()
-	return require("tab_workspace.roots").all(vim.api.nvim_get_current_tabpage())
 end
 
 --- 打开多根树（neo-tree 的 workspace 源）

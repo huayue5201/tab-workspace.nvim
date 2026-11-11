@@ -138,7 +138,7 @@ public API forwarding).
 ```
 BufEnter/BufWinEnter  membership in the current tab + maybe_follow (switch root only when the file is outside it)
 TabEnter              relist (synchronous, avoids a first-frame flicker) → validate membership + lsp.sync on the next event loop
-TabLeave              remember the "previous tab" for alternate
+TabLeave              record the tab in the most-recently-used order (for alternate / tab_items)
 TabClosed             root.prune → schedule(lifecycle.prune + lsp.on_tab_closed)
 DirChanged / User TabWorkspaceRoot / VimEnter
                       local_settings.sync (load/roll back .nvim.lua)
@@ -149,16 +149,34 @@ resession post_load   session.on_post_load → local_settings.sync
 
 ```lua
 local ws = require("tab_workspace")
-ws.new_workspace(dir?)   ws.close_workspace()   ws.alternate()   ws.picker()
-ws.set_root(dir)         ws.prompt_root()       ws.root_back()   ws.root_unpin()
-ws.save_session(name?)   ws.load_session(name?)
-ws.edit_local_settings() ws.reload_local_settings()
-ws.attach_root(dir?)    ws.detach_root(dir?)      ws.roots()
-ws.visible_buffers()     ws.close_buffer(buf)   ws.is_managed_buf(buf)
-ws.root(tab?)            ws.workspace_name(tab?)  ws.aux_roots(tab?)
-ws.find_root(tab, path)  ws.resolve_root(buf?)    ws.is_float_win(win)
-ws.attach_resession()
+
+-- Workspaces (one tab = one workspace), ordered by most recent use
+ws.picker(opts?)        -- tabs + saved sessions + "open directory" (see below)
+ws.tab_items(opts?)     -- { tab, number, name, dir, buffers, current }[]
+ws.goto_tab(target)     -- tabpage handle, tab number, or a tab_items() entry
+ws.alternate()          -- switch to the most recently used other tab
+ws.new_workspace(dir?)  ws.close_workspace()   ws.rename_workspace()
+ws.set_workspace_name(name)                    ws.workspace_name(tab?)
+
+-- Roots
+ws.root(tab?)           ws.set_root(dir)       ws.prompt_root()
+ws.root_back()          ws.root_pinned(tab?)   ws.root_unpin()
+ws.attach_root(dir?)    ws.detach_root(dir?)   ws.aux_roots(tab?)   ws.find_root(tab, path)
+ws.workspace_tree()
+
+-- Buffers
+ws.visible_buffers()    ws.close_buffer(buf)
+
+-- Sessions
+ws.save_session(name?)  ws.load_session(name?)  ws.delete_session()  ws.attach_resession()
+
+-- Workspace-local config (.nvim.lua) and cwd recovery
+ws.edit_local_settings()  ws.reload_local_settings()  ws.guard_cwd()
 ```
+
+Predicates that do not depend on a workspace (`is_managed_buf`, `is_float_win`,
+`is_ephemeral_win`) live in `require("tab_workspace.util")`; internals such as
+`session`, `roots` and `local_settings` are implementation detail.
 
 ## Keymaps and commands
 
@@ -209,6 +227,27 @@ Every action is also available through the `:TabWorkspace` command defined by
 :TabWorkspace attach [dir]     " attach auxiliary root
 :TabWorkspace detach [dir]     " detach auxiliary root
 :TabWorkspace tree             " multi-root tree (needs neo-tree)
+```
+
+### Many tabs: switch by list, not by number
+
+Tab numbers shift whenever a tab is closed, so the plugin tracks its own
+most-recently-used order and exposes it as data:
+
+- `ws.tab_items()` — every workspace with `name`, `dir`, `buffers` and
+  `current`, current tab first, then most recently used, then never-visited
+  tabs in tab order. `{ order = "number" }` sorts by tab number instead.
+- `ws.goto_tab(target)` — jump to a handle, a tab number, or an item from the
+  list above.
+- `ws.picker()` — the built-in UI on top of the same list (plus saved sessions
+  and "open directory"), so a long tab history is one keystroke away.
+
+`ws.picker()` calls `vim.ui.select`; pass `select` to plug in your own UI (same
+signature: `select(items, { prompt, format_item }, on_choice)`):
+
+```lua
+local picker = require("my.picker")
+ws.picker({ select = picker.select })
 ```
 
 ## `.nvim.lua` (workspace-local config)

@@ -1,5 +1,50 @@
 # tab-workspace.nvim — one tab, one workspace
 
+Each tab gets its own buffer set, its own cwd, its own LSP lifecycle and its own
+`.nvim.lua`. See [Model](#model) for how that is represented.
+
+## Requirements
+
+- Neovim >= 0.10 (checked by `:checkhealth tab_workspace`).
+- No required dependencies: the core (buffer membership, per-tab cwd, LSP lifecycle, multi-root, `.nvim.lua`) is pure Neovim.
+- Optional, only for the features listed:
+
+| Optional plugin | Enables |
+|---|---|
+| [resession.nvim](https://github.com/stevearc/resession.nvim) | saving/restoring workspaces as sessions (`store.lua`, `session.lua`, `session_guard.lua`) |
+| [neo-tree.nvim](https://github.com/nvim-neo-tree/neo-tree.nvim) | the multi-root tree (external source `workspace`) |
+| [overseer.nvim](https://github.com/stevearc/overseer.nvim) | `w.task()` in `.nvim.lua` |
+| [nvim-dap](https://github.com/mfussenegger/nvim-dap) | `w.launch()` in `.nvim.lua` |
+| [bufferline.nvim](https://github.com/akinsho/bufferline.nvim) | not required — the plugin only maintains `buflisted`; redraw is delegated through `on_change` |
+| [tab-terminal.nvim](https://github.com/huayue5201/tab-terminal.nvim) | works with no wiring because it uses the tab-scoped cwd; it can also show the workspace name through its optional `workspace_name` host hook |
+
+## Installation
+
+Any plugin manager. With lazy.nvim:
+
+```lua
+{
+  "huayue5201/tab-workspace.nvim",
+  -- optional: enables sessions, multi-root tree, w.task, w.launch
+  dependencies = { "stevearc/resession.nvim", "nvim-neo-tree/neo-tree.nvim" },
+  opts = { auto_root = true },
+}
+```
+
+With `vim.pack` or a manual `packpath` entry:
+
+```lua
+vim.pack.add({ "https://github.com/huayue5201/tab-workspace.nvim" })
+require("tab_workspace").setup({ auto_root = true })
+```
+
+Notes:
+
+- `setup()` is **not** called automatically; `plugin/tab_workspace.lua` only defines the `:TabWorkspace` command. Call `setup()` yourself (lazy.nvim does it via `opts`); the plugin works without any configuration.
+- No keymaps are registered (see [Keymaps](#keymaps)).
+- Nothing is `require`d at startup that needs an optional plugin: neo-tree and resession are loaded on demand.
+- Run `:checkhealth tab_workspace` to verify the Neovim version, that the core module loads, and which optional integrations were found.
+
 ## Model
 
 One **tab = one workspace**, with no extra "workspace entity / registry":
@@ -115,9 +160,30 @@ ws.find_root(tab, path)  ws.resolve_root(buf?)    ws.is_float_win(win)
 ws.attach_resession()
 ```
 
-Keymaps (`boot/keymaps.lua`):
+## Keymaps and commands
 
-| Key | Action |
+The plugin registers **no keymaps**. Map what you need; these are the ones the
+API is designed around (put them in your own `boot/keymaps.lua` or `keys.lua`):
+
+```lua
+local ws = require("tab_workspace")
+vim.keymap.set("n", "<leader>lwn", ws.new_workspace, { desc = "New workspace" })
+vim.keymap.set("n", "<leader>lwc", ws.close_workspace, { desc = "Close workspace" })
+vim.keymap.set("n", "<leader>lwa", ws.alternate, { desc = "Alternate workspace" })
+vim.keymap.set("n", "<leader>lwl", ws.picker, { desc = "Workspace/session list" })
+vim.keymap.set("n", "<leader>lwN", ws.rename_workspace, { desc = "Rename workspace" })
+vim.keymap.set("n", "<leader>lst", ws.save_session, { desc = "Save session" })
+vim.keymap.set("n", "<leader>lsd", ws.delete_session, { desc = "Delete session" })
+vim.keymap.set("n", "<leader>lws", ws.prompt_root, { desc = "Pin root" })
+vim.keymap.set("n", "<leader>lwr", ws.root_back, { desc = "Previous root (pinned)" })
+vim.keymap.set("n", "<leader>lwR", ws.root_unpin, { desc = "Unpin root" })
+vim.keymap.set("n", "<leader>lwe", ws.edit_local_settings, { desc = "Edit .nvim.lua" })
+vim.keymap.set("n", "<leader>lw+", ws.attach_root, { desc = "Attach root" })
+vim.keymap.set("n", "<leader>lw-", ws.detach_root, { desc = "Detach root" })
+vim.keymap.set("n", "<leader>lwt", ws.workspace_tree, { desc = "Multi-root tree" })
+```
+
+| Key (reference setup) | Action |
 |---|---|
 | `<leader>lwn` | new workspace (new tab + pick a directory) |
 | `<leader>lwc` | close workspace |
@@ -129,6 +195,21 @@ Keymaps (`boot/keymaps.lua`):
 | `<leader>lwe` | edit the current workspace's `.nvim.lua` |
 | `<leader>lw+` / `<leader>lw-` | attach auxiliary root / detach auxiliary root (the main root stays the cwd) |
 | `<leader>lwt` / `<leader>ew` | multi-root tree (neo-tree `workspace` source, panel name Workspace) |
+
+Every action is also available through the `:TabWorkspace` command defined by
+`plugin/tab_workspace.lua` if you prefer not to map anything:
+
+```vim
+:TabWorkspace                  " picker (same as :TabWorkspace picker)
+:TabWorkspace new [dir]        " new workspace
+:TabWorkspace close            " close current workspace
+:TabWorkspace rename           " rename current workspace
+:TabWorkspace edit             " edit the current workspace's .nvim.lua
+:TabWorkspace reload           " reload .nvim.lua now
+:TabWorkspace attach [dir]     " attach auxiliary root
+:TabWorkspace detach [dir]     " detach auxiliary root
+:TabWorkspace tree             " multi-root tree (needs neo-tree)
+```
 
 ## `.nvim.lua` (workspace-local config)
 
@@ -177,10 +258,9 @@ results such as `getcwd()`, `buflisted`, option values, and whether a
 command/template exists — never internal implementation details.
 
 
-## Installation
+## Configuration
 
 ```lua
--- vim.pack / lazy.nvim / manual packpath all work
 require("tab_workspace").setup({
   auto_root = true,
   root_markers = nil,          -- nil = use the built-in generic marker list
@@ -189,6 +269,11 @@ require("tab_workspace").setup({
   hide_in_bar = nil,           -- fun(bufnr): boolean? (defaults to buftype)
   on_change = nil,             -- fun(): redraw after buflisted changes
   excluded_filetypes = nil,    -- table<string, boolean>: sidebar fts excluded from membership
+
+  -- LSP lifecycle per tab
+  lsp_stop_on_leave = true,    -- stop clients the tab no longer uses after leaving
+  lsp_restart_on_enter = true, -- restart them when coming back
+  lsp_stop_delay = 5000,       -- ms to wait before stopping (covers fast tab switching)
 })
 ```
 
